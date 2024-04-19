@@ -1,0 +1,19 @@
+---
+#用于calico 建立链接得网卡名称，一般为指定网关的网卡
+kube_interface: "ens192|eth0"
+
+
+
+#固定值无需修改
+kube_service_subnet: "10.233.0.0/16"
+kube_pod_subnet: "100.100.0.0/16"
+repository_ip: "10.33.88.151"
+containerd_version: "1.6.0"
+containerd_storage_dir: "/var/lib/containerd"
+cni_bin_dir: "/opt/cni/bin"
+ENABLE_MIRROR_REGISTRY: true
+bin_dir: "/usr/local/bin"
+temp_dir: "/data/temp"
+
+base_dir: "/data/testyao/install"
+

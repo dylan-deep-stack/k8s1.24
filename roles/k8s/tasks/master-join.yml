@@ -1,0 +1,49 @@
+- name: Confirm kubelet has stopped
+  service:
+    name: kubelet
+    state: stopped
+    enabled: yes
+
+- name: Other master node to join the cluster
+  shell: >
+    kubeadm join --config /etc/kubernetes/kubeadm-config.yaml
+    --ignore-preflight-errors=DirAvailable--etc-kubernetes-manifests
+
+- include_tasks: kubeconfig.yml
+
+- name: Systemctl daemon-reload
+  systemd:
+    daemon_reload: yes
+
+- name: Restart kubelet service
+  service:
+    name: kubelet
+    state: restarted
+    enabled: yes
+
+- name: Waiting for apiserver to running
+  uri:
+    url: "https://127.0.0.1:6443/healthz"
+    validate_certs: no
+  register: apiserver_result
+  until: apiserver_result.status == 200
+  retries: 60
+  delay: 5
+
+- name: Waiting for kube-scheduler to running
+  uri:
+    url: "https://127.0.0.1:10259/healthz"
+    validate_certs: no
+  register: scheduler_result
+  until: scheduler_result.status == 200
+  retries: 60
+  delay: 5
+
+- name: Waiting for kube-controller-manager to running
+  uri:
+    url: "https://127.0.0.1:10257/healthz"
+    validate_certs: no
+  register: controller_manager_result
+  until: controller_manager_result.status == 200
+  retries: 60
+  delay: 5

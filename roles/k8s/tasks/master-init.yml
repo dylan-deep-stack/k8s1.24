@@ -1,0 +1,64 @@
+- name: Confirm kubelet has stopped
+  service:
+    name: kubelet
+    state: stopped
+    enabled: yes
+
+- name: Initial the first master node
+  shell: "kubeadm init --config=/etc/kubernetes/kubeadm-config.yaml"
+
+- name: Read kubelet.conf file stat info
+  stat: 
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf_stat
+
+- include_tasks: kubeconfig.yml
+  when: kubelet_conf_stat.stat.exists
+
+- name: Systemctl daemon-reload
+  systemd:
+    daemon_reload: yes
+
+- name: Restart kubelet service
+  service:
+    name: kubelet
+    state: restarted
+    enabled: yes
+
+- name: Waiting for apiserver to running
+  uri:
+    url: "https://{{ CURRENT_HOST_IP }}:6443/healthz"
+    validate_certs: no
+  register: apiserver_result
+  until: apiserver_result.status == 200
+  retries: 60
+  delay: 5
+
+- name: Waiting for kube-scheduler to running
+  uri:
+    url: "https://127.0.0.1:10259/healthz"
+    validate_certs: no
+  register: scheduler_result
+  until: scheduler_result.status == 200
+  retries: 60
+  delay: 5
+
+- name: Waiting for kube-controller-manager to running
+  uri:
+    url: "https://127.0.0.1:10257/healthz"
+    validate_certs: no
+  register: controller_manager_result
+  until: controller_manager_result.status == 200
+  retries: 60
+  delay: 5
+
+- name: Create kubelet certificate configuration
+  template:
+    src: kubelet-certificates-renewal.yaml.j2
+    dest: /etc/kubernetes/config/kubelet-certificates-renewal.yaml
+    owner: root
+    group: root
+    mode: 0644
+
+- name: Authorize kubelet to automatically rotate server certificates
+  shell: "/usr/local/bin/kubectl apply -f /etc/kubernetes/config/kubelet-certificates-renewal.yaml"

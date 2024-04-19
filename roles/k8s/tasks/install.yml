@@ -1,0 +1,256 @@
+---
+- include_tasks: "containerd.yml"
+- include_tasks: "prepare.yml"
+
+- name: IF etcd installed
+  stat:
+    path: /etc/systemd/system/etcd.service
+  register: etcd_installed
+
+- block:
+  - name: Prepare etcd directory
+    file: name={{ item }} state=directory
+    with_items:
+    - "/var/lib/etcd"
+  
+  - name: Copy x86 etcd file
+    copy:
+      src: "{{ base_dir }}/k8s/x86/etcd-v3.5.2-linux-amd64/{{ item }}"
+      dest: "/usr/local/bin/"
+      mode: "0755"
+    with_items:
+    - etcd
+    - etcdctl
+    when: ansible_machine == 'x86_64'
+  
+  - name: Copy arm etcd file
+    copy:
+      src: "{{ base_dir }}/k8s/arm/etcd-v3.5.2-linux-arm64/{{ item }}"
+      dest: "/usr/local/bin/"
+      mode: "0755"
+    with_items:
+    - etcd
+    - etcdctl
+    when: ansible_machine != 'x86_64'
+  
+  - name: Create etcd systemd unit file
+    template: src=etcd.service.j2 dest=/etc/systemd/system/etcd.service
+  
+  - name: Enable etcd service
+    shell: systemctl enable etcd
+    ignore_errors: true
+  
+  - name: Start etcd service
+    shell: systemctl daemon-reload && systemctl restart etcd
+  
+  - name: Wait etcd service to start
+    shell: "systemctl status etcd.service|grep Active"
+    register: etcd_status
+    until: '"running" in etcd_status.stdout'
+    retries: 8
+    delay: 8
+
+  when: not etcd_installed.stat.exists
+
+- name: Create kubernetes directory
+  file: 
+    name: "{{ item }}"
+    state: directory
+  with_items:
+  - /var/lib/kubelet
+  - /etc/kubernetes/pki
+  - /etc/kubernetes/config
+  - /etc/kubernetes/manifests
+  - /var/log/kubernetes/audit
+  - /usr/share/bash-completion/completions
+
+- name: Read kubelet.conf file stat info
+  stat: 
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf_stat
+
+# 生成 kubeadm 配置
+- include_tasks: kubeadm-config.yml
+
+- name: Create EncryptionConfiguration configuration file
+  template:
+    src: secrets-encryption.yaml.j2
+    dest: /etc/kubernetes/pki/secrets-encryption.yaml
+    owner: root
+    group: root
+    mode: 0644
+
+# 初始化 master 节点
+- include_tasks: master-init.yml
+  when: 
+  - not kubelet_conf_stat.stat.exists
+  - inventory_hostname == groups['kube-master'][0]
+
+# 初始化其他 master 节点
+- include_tasks: master-join.yml
+  when:
+  - not kubelet_conf_stat.stat.exists
+  - inventory_hostname != groups['kube-master'][0]
+  - inventory_hostname in groups['kube-master']
+
+- name: Confirm kubelet configuration modify
+  template:
+    src: kubelet-config.v1beta1.yaml.j2
+    dest: /var/lib/kubelet/config.yaml
+    owner: root
+    mode: 0644
+  register: configuration_result
+
+- name: Restart kubelet service
+  service:
+    name: kubelet
+    state: restarted
+    enabled: yes
+  when: configuration_result.changed
+
+- block:
+  - name: Ensure that apiserver accesses the etcd cluster properly
+    shell: "kubectl get ns"
+    register: etcd_status
+    until: '"kube-system" in etcd_status.stdout'
+    retries: 10
+    delay: 6
+
+  - name: Get cluster node info
+    shell: "kubectl get node -o name"
+    register: kubectl_get_node_output
+  run_once: true
+  delegate_to: "{{ groups['kube-master'][0] }}"
+
+- name: IF CNI yaml installed
+  stat:
+    path: /etc/kubernetes/plugins/network-plugin/calico-typha.yaml
+  register: CNIyaml_installed
+
+- block:
+  - name: CNI | Create cni directory
+    file: name=/etc/cni/net.d state=directory
+  
+  - name: CNI | Create cni manifests directory
+    file: name=/etc/kubernetes/plugins/network-plugin state=directory
+  
+  - name: CNI | Create cni directory
+    file: name="/opt/cni/bin" state=directory
+  
+  
+  - name: CNI | Unarchive x86 cni plugins
+    unarchive:
+      src: "{{ base_dir }}/k8s/x86/calico-v3.24.5/cni-plugins-linux-amd64-v1.0.1.tgz"
+      dest: "/opt/cni/bin"
+    when: ansible_machine == 'x86_64'
+  
+  - name: CNI | Unarchive arm cni plugins
+    unarchive:
+      src: "{{ base_dir }}/k8s/arm/calico-v3.24.5/cni-plugins-linux-arm64-v1.0.1.tgz"
+      dest: "/opt/cni/bin"
+    when: ansible_machine != 'x86_64'
+  
+  
+  - name: Copy x86 the calicoctl binary
+    copy:
+      src: "{{ base_dir }}/k8s/x86/calico-v3.24.5/calicoctl"
+      dest: "/usr/local/bin/calicoctl"
+      mode: "0755"
+    when: ansible_machine == 'x86_64'
+
+  - name: Copy arm the calicoctl binary
+    copy:
+      src: "{{ base_dir }}/k8s/arm/calico-v3.24.5/calicoctl"
+      dest: "/usr/local/bin/calicoctl"
+      mode: "0755"
+    when: ansible_machine != 'x86_64'
+    ignore_errors: true
+
+  - name: Calico | Copy calico crds file
+    template:
+      #src: calico/crds-v3.24.yaml.j2
+      src: calico/crds-v3.21.yaml.j2
+      dest: /etc/kubernetes/plugins/network-plugin/crds.yaml
+  
+  - name: Calico | Copy calico typha file
+    template:
+      src: calico/calico-typha-v3.21.yaml.j2
+      dest: /etc/kubernetes/plugins/network-plugin/calico-typha.yaml
+    run_once: true
+    delegate_to: "{{ groups['kube-master'][0] }}"
+
+  when:
+    - inventory_hostname == groups['kube-master'][0]
+    - not CNIyaml_installed.stat.exists
+
+- name: Calico | Deploy calico crds
+  shell: "kubectl apply -f /etc/kubernetes/plugins/network-plugin/crds.yaml"
+  run_once: true
+  delegate_to: "{{ groups['kube-master'][0] }}"
+
+- name: Calico | Deploy calico typha
+  shell: "kubectl apply -f /etc/kubernetes/plugins/network-plugin/calico-typha.yaml"
+  run_once: true
+  delegate_to: "{{ groups['kube-master'][0] }}"
+
+- block:
+  - name: Cancel the node label
+    shell: >
+      kubectl label node {{ inventory_hostname }} node-role.kubernetes.io/control-plane- &&
+      kubectl label node {{ inventory_hostname }} node-role.kubernetes.io/master- &&
+      kubectl label node {{ inventory_hostname }} node-role.kubernetes.io/worker- &&
+      kubectl label node {{ inventory_hostname }} node-role.kubernetes.io/etcd-
+    ignore_errors: true
+
+  - name: Set the master label
+    shell: >
+      kubectl label node {{ inventory_hostname }} node-role.kubernetes.io/control-plane='' --overwrite &&
+      kubectl label node {{ inventory_hostname }} node-role.kubernetes.io/master='' --overwrite &&
+      kubectl label node {{ inventory_hostname }} node-role.kubernetes.io/etcd='' --overwrite
+
+  delegate_to: "{{ groups['kube-master'][0] }}"
+
+  #- name: Install keepalived
+  #  template:
+  #    src: keepalived.yaml.j2
+  #    dest: /etc/kubernetes/manifests/keepalived.yaml
+  #
+  #  when: kube_install_keepalived == "yes"
+
+- name: Modify hosts kubernetes record
+  lineinfile:
+    path: "/etc/hosts"
+    regexp: "kubernetes"
+    line: "{{ ansible_ssh_host }} kubernetes"
+
+- name: Wait ping kubernetes OK
+  shell: ping kubernetes -c 1
+  register: ping_test
+  until: ping_test.rc == 0
+  retries: 10
+  delay: 1
+  run_once: true
+  delegate_to: "{{ groups['kube-master'][0] }}"
+
+- name: Restart kube-proxy
+  shell: "kubectl delete pods -n kube-system -l k8s-app=kube-proxy"
+  run_once: true
+  delegate_to: "{{ groups['kube-master'][0] }}"
+
+- name: Restart kubelet containerd
+  shell: "systemctl restart kubelet && systemctl restart containerd"
+  run_once: true
+
+
+- name: Copy netshoot tools yaml
+  template:
+    src: netshoot.yaml.j2
+    dest: /opt/ys/netshoot.yaml
+  run_once: true
+  delegate_to: "{{ groups['kube-master'][0] }}"
+
+
+- name:  Deploy netshoot tools
+  shell: "kubectl apply -f /opt/ys/netshoot.yaml"
+  run_once: true
+  delegate_to: "{{ groups['kube-master'][0] }}"

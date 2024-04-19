@@ -1,0 +1,4 @@
+[kube-master]
+k8stest ansible_ssh_pass=test ansible_ssh_host=10.33.60.91
+k8stest2 ansible_ssh_pass=test ansible_ssh_host=10.33.60.92
+k8stest3 ansible_ssh_pass=test ansible_ssh_host=10.33.60.93

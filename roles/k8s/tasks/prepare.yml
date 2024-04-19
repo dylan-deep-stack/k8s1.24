@@ -1,0 +1,364 @@
+---
+- name: Disable swap
+  shell: "swapoff -a && sysctl -w vm.swappiness=0"
+  ignore_errors: true
+
+- name: Delete fstab swap config
+  lineinfile:
+    path: /etc/fstab
+    regexp: 'swap'
+    state: absent
+    backup: yes
+
+- name: Load kernel module
+  modprobe: 
+    name: "{{ item }}"
+    state: present
+  with_items:
+  - sunrpc
+  - ip_vs
+  - ip_vs_rr
+  - ip_vs_sh
+  - ip_vs_wrr
+  - br_netfilter
+  - nf_conntrack
+  ignore_errors: true
+
+- name: Setup systemd-modules-load config
+  template: 
+    src: 10-k8s-modules.conf.j2
+    dest: /etc/modules-load.d/10-k8s-modules.conf
+
+- name: Restart systemd-modules-load
+  service:
+    name: systemd-modules-load
+    state: restarted
+    enabled: yes
+
+- name: Set system parameters
+  template: 
+    src: 99-sysctl.conf.j2
+    dest: /etc/sysctl.d/99-sysctl.conf
+
+- name: Effective system parameters
+  shell: "sysctl -p /etc/sysctl.d/99-sysctl.conf"
+  ignore_errors: true
+
+- name: Check whether the sysctl.conf exists
+  stat:
+    path: /etc/sysctl.conf
+  register: sysctl_conf_stat
+
+- name: Delete the default ip_forward parameter
+  lineinfile:
+    dest: /etc/sysctl.conf
+    regexp: "^net.ipv4.ip_forward"
+    state: absent
+  when: sysctl_conf_stat.stat.isreg is defined
+
+- name: Create systemd directory
+  file: 
+    name: /etc/systemd/system.conf.d 
+    state: directory
+
+- name: Setup system ulimits
+  template: 
+    src: 30-k8s-ulimits.conf.j2
+    dest: /etc/systemd/system.conf.d/30-k8s-ulimits.conf
+
+- name: Status firewalld
+  shell: >
+    systemctl status firewalld | grep active || echo "not be found"
+  register: firewalld_already_installed
+
+- name: Disable firewalld
+  service:
+    name: firewalld
+    state: stopped
+    enabled: no
+  when: '"active" in firewalld_already_installed.stdout'
+  ignore_errors: true
+
+
+- name: Copy x86 base and ipvstools rpm package
+  copy:
+    src: "{{ base_dir }}/k8s/x86/rpm/rpm.tar.gz"
+    dest: "/opt/ys/"
+  when: ansible_machine == 'x86_64'
+
+- name: Copy ARM base and ipvstools rpm package
+  copy:
+    src: "{{ base_dir }}/k8s/arm/rpm/rpm.tar.gz"
+    dest: "/opt/ys/"
+  when: ansible_machine != 'x86_64'
+
+
+- name: CNI | Unarchive x86 base rpm package
+  unarchive:
+    src: "/opt/ys/rpm.tar.gz"
+    dest: "/opt/ys"
+    copy: no
+  when: ansible_machine == 'x86_64'
+
+- name: CNI | Unarchive ARM base rpm package
+  unarchive:
+    src: "/opt/ys/rpm.tar.gz"
+    dest: "/opt/ys"
+    copy: no
+  when: ansible_machine != 'x86_64'
+
+
+- name: Install x86 base and ipvstoos rpm package
+  shell: >
+    cd /opt/ys &&
+    yum localinstall -y python3-pytz-2021.3-1.oe2203.noarch.rpm &&
+    yum localinstall -y python3-markupsafe-2.0.1-2.oe2203.x86_64.rpm &&
+    yum localinstall -y python3-babel-2.9.1-1.oe2203.noarch.rpm &&
+    yum localinstall -y python3-httplib2-0.19.0-4.oe2203.noarch.rpm &&
+    yum localinstall -y python3-jinja2-3.0.3-3.oe2203.noarch.rpm &&
+    yum localinstall -y python3-jmespath-0.10.0-2.oe2203.noarch.rpm &&
+    yum localinstall -y sshpass-1.09-1.oe2203.x86_64.rpm &&
+    yum localinstall -y ansible-2.9.27-4.oe2203.noarch.rpm &&
+    yum localinstall -y libnetfilter* &&
+    yum localinstall -y conntrack-tools-1.4.6-3.oe2203.x86_64.rpm &&
+    yum localinstall -y ipvsadm-1.31-5.oe2203.x86_64.rpm &&
+    yum localinstall -y socat-1.7.3.2-8.oe2203.x86_64.rpm 
+  when: ansible_machine == 'x86_64'
+
+- name: Install arm base and ipvstools rpm package
+  shell: >
+    cd /opt/ys &&
+    yum localinstall -y python3-pytz-2021.3-1.oe2203.noarch.rpm &&
+    yum localinstall -y python3-markupsafe-2.0.1-2.oe2203.aarch64.rpm &&
+    yum localinstall -y python3-babel-2.9.1-1.oe2203.noarch.rpm &&
+    yum localinstall -y python3-httplib2-0.19.0-4.oe2203.noarch.rpm &&
+    yum localinstall -y python3-jinja2-3.0.3-3.oe2203.noarch.rpm &&
+    yum localinstall -y python3-jmespath-0.10.0-2.oe2203.noarch.rpm &&
+    yum localinstall -y sshpass-1.09-1.oe2203.aarch64.rpm &&
+    yum localinstall -y ansible-2.9.27-4.oe2203.noarch.rpm &&
+    yum localinstall -y ipvsadm-1.31-2.oe2203.aarch64.rpm &&
+    yum localinstall -y libnetfilter* &&
+    yum localinstall -y conntrack-tools-1.4.6-2.oe2203.aarch64.rpm &&
+    yum localinstall -y socat-1.7.3.2-8.oe2203.aarch64.rpm
+  when: ansible_machine != 'x86_64'
+  ignore_errors: true
+
+
+- name: Install x86 base rpm package
+  yum:
+    name:
+      - conntrack-tools
+      - socat
+      - sshpass
+      - ipvsadm
+    state: latest
+  when: ansible_machine == 'x86_64'
+  ignore_errors: true
+
+- name: Install arm base and ipvs rpm package
+  yum:
+    name:
+      - conntrack-tools
+      - socat
+      - sshpass
+      - ipvsadm
+    state: latest
+  when: ansible_machine != 'x86_64'
+  ignore_errors: true
+
+
+- name: Temp stop selinux
+  shell: "setenforce 0"
+  failed_when: false
+
+- name: Disable selinux
+  lineinfile:
+    dest: /etc/selinux/config
+    regexp: "^SELINUX="
+    line: "SELINUX=disabled"
+
+- name: Insert hosts record
+  lineinfile:
+    path: "/etc/hosts"
+    regexp: "{{ item }}"
+    line: "{{ hostvars[item]['ansible_ssh_host'] }} {{ item }}"
+  with_items:
+    - "{{ groups['kube-master'] }}"
+
+- name: Insert hosts kubernetes record
+  vars:
+    item: "{{ groups['kube-master'][0] }}"
+  lineinfile:
+    path: "/etc/hosts"
+    regexp: "kubernetes"
+    line: "{{ hostvars[item]['ansible_ssh_host'] }} kubernetes"
+
+
+- block:
+  - name: Prepare some dirs
+    file: name={{ item }} state=directory
+    with_items:
+      - /etc/kubernetes/images
+      - /etc/kubernetes/manifests
+      - /usr/lib/systemd/system/kubelet.service.d
+      - /data/temp/k8s
+  
+  - name: Copy x86 kubeadm kubelet kubectl file
+    copy:
+      src: "{{ base_dir }}/k8s/x86/k8s1.24.17/{{ item }}"
+      dest: "/usr/local/bin/"
+      mode: "0755"
+    with_items:
+      - kubeadm
+      - kubelet
+      - kubectl
+    when: ansible_machine == 'x86_64'
+
+  - name: Copy arm kubeadm kubelet kubectl file
+    copy:
+      src: "{{ base_dir }}/k8s/arm/k8s1.24.17/{{ item }}"
+      dest: "/usr/local/bin/"
+      mode: "0755"
+    with_items:
+      - kubeadm
+      - kubelet
+      - kubectl
+    when: ansible_machine != 'x86_64'
+
+  - name: Create kubelet systemd unit file
+    template: src=kubelet.service.j2 dest=/usr/lib/systemd/system/kubelet.service
+  
+  - name: Create kubelet config file
+    template: src=10-kubeadm.conf.j2 dest=/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf
+  
+  - name: Create kubelet params file
+    template: src=kubelet.config.j2 dest=/etc/sysconfig/kubelet
+  
+  - name: Enable kubelet service
+    shell: systemctl enable kubelet
+    ignore_errors: true
+  
+  - name: Configure kubectl command line auto-completion
+    shell: kubectl completion bash > /usr/share/bash-completion/completions/kubectl
+    ignore_errors: true
+
+
+
+- block:
+  - name: Download x86 kube-master image
+    copy:
+      src: "{{ base_dir }}/k8s/x86/k8s1.24.17/{{ item }}"
+      dest: "/data/temp/k8s/"
+    with_items:
+      - kube-apiserver.tar 
+      - kube-controller-manager.tar
+      - kube-proxy.tar
+      - kube-scheduler.tar
+      - pause.tar 
+      - netshoot.tar.gz 
+    when: ansible_machine == 'x86_64'
+  
+  - name: Download arm kube-master image
+    copy:
+      src: "{{ base_dir }}/k8s/arm/k8s1.24.17/{{ item }}"
+      dest: "/data/temp/k8s/"
+    with_items:
+      - kube-apiserver.tar 
+      - kube-controller-manager.tar
+      - kube-proxy.tar
+      - kube-scheduler.tar
+      - pause.tar 
+      - netshoot.tar.gz 
+    when: ansible_machine != 'x86_64'
+  
+  - name: CTR | Load x86 kube-master image
+    shell: "ctr -n k8s.io image import  /data/temp/k8s/{{ item }}"
+    with_items:
+      - kube-controller-manager.tar
+      - kube-apiserver.tar
+      - kube-scheduler.tar
+      - kube-proxy.tar
+      - pause.tar
+      - netshoot.tar.gz 
+    when: ansible_machine == 'x86_64'
+
+  - name: CTR | Load arm kube-master image
+    shell: "ctr -n k8s.io image import  /data/temp/k8s/{{ item }}"
+    with_items:
+      - kube-controller-manager.tar
+      - kube-apiserver.tar
+      - kube-scheduler.tar
+      - kube-proxy.tar
+      - pause.tar
+      - netshoot.tar.gz 
+    when: ansible_machine != 'x86_64'
+
+  - name: scp x86 calico-v3.24.5 image
+    copy:
+      src: "{{ base_dir }}/k8s/x86/calico-v3.24.5/{{ item }}"
+      dest: "/data/temp/k8s/"
+    with_items:
+      - coredns-1.8.6.tar.gz
+      - cni-v3.24.5.tar.gz 
+      - kube-controllers-v3.24.5.tar.gz
+      - node-v3.24.5.tar.gz
+    when: ansible_machine == 'x86_64'
+
+  - name: scp arm calico-v3.24.5 image
+    copy:
+      src: "{{ base_dir }}/k8s/arm/calico-v3.24.5/{{ item }}"
+      dest: "/data/temp/k8s/"
+    with_items:
+      - coredns-1.8.6.tar.gz
+      - cni-v3.24.5.tar.gz 
+      - kube-controllers-v3.24.5.tar.gz
+      - node-v3.24.5.tar.gz
+    when: ansible_machine != 'x86_64'
+
+  - name: Ctr | Load x86 Calico-v3.24.5 image
+    shell: "ctr -n k8s.io image import /data/temp/k8s/{{ item }}"
+    with_items:
+      - coredns-1.8.6.tar.gz
+      - cni-v3.24.5.tar.gz 
+      - kube-controllers-v3.24.5.tar.gz
+      - node-v3.24.5.tar.gz
+    when: ansible_machine == 'x86_64'
+
+  - name: Ctr | Load arm Calico-v3.24.5 image
+    shell: "ctr -n k8s.io image import /data/temp/k8s/{{ item }}"
+    with_items:
+      - coredns-1.8.6.tar.gz
+      - cni-v3.24.5.tar.gz 
+      - kube-controllers-v3.24.5.tar.gz
+      - node-v3.24.5.tar.gz
+    when: ansible_machine != 'x86_64'
+
+
+- name: If certificate installed
+  stat:
+    path: /var/lib/kubelet/pki/kubelet.key
+  register: certificate_installed
+  delegate_to: "{{ groups['kube-master'][0] }}"
+
+- block:
+  - name: On master node create certificate directory
+    file: 
+      name: "{{ item }}"
+      state: directory
+    with_items:
+      - /etc/kubernetes/pki
+      - /var/lib/kubelet/pki
+      - /etc/kubernetes/pki/etcd
+  
+  - block:
+    # 获取密钥状态
+    - include_tasks: certs_stat.yml
+    # 生成证书
+    - include_tasks: generate.yml
+    when: inventory_hostname == groups['kube-master'][0]
+  
+  # 分发证书
+  - include_tasks: distribute.yml
+
+  when: not certificate_installed.stat.exists
+

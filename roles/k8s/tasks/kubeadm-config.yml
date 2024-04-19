@@ -1,0 +1,16 @@
+---
+- name: Setup kubeadm api version to v1beta2
+  set_fact:
+    kubeadmConfig_api_version: v1beta2
+
+- name: Create kubeadm configuration file
+  template:
+    src: >-
+      {% if inventory_hostname == groups['kube-master'][0] -%}
+      kubeadm-controlplane-init.v1beta2.yaml.j2
+      {%- else -%}
+      kubeadm-controlplane-join.v1beta2.yaml.j2
+      {%- endif %}
+    dest: "/etc/kubernetes/kubeadm-config.yaml"
+    owner: root
+    mode: 0644

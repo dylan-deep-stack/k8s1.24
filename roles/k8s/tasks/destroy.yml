@@ -1,0 +1,180 @@
+---
+- block:
+  - name: Reset the node using kubeadm
+    shell: "kubeadm reset -f"
+
+  - name: Stop and Disalbe kubelet etcd service
+    service:
+      name: "{{ item }}"
+      state: stopped
+      enabled: no
+    with_items:
+    - "kubelet"
+    - "etcd"
+      #- "docker"  
+      #  - name: yum remove docker
+      #    yum:
+      #      name:
+      #        - docker-engine
+      #      state: absent
+
+
+  - name: Stop and disable containerd service
+    service:
+      name: containerd
+      state: stopped
+      enabled: no
+    ignore_errors: true
+
+  - name: Umount containerd filesystems
+    shell: "mount | grep 'containerd/io.containerd'| awk '{print $3}'|xargs umount || exit 0"
+    args:
+      warn: false
+    ignore_errors: true
+
+  - name: Remove files and dirs
+    file: name={{ item }} state=absent
+    with_items:
+    - "/etc/containerd/"
+    - "/etc/crictl.yaml"
+    - "/etc/systemd/system/containerd.service"
+    - "/opt/containerd/"
+    - "/var/lib/containerd"
+    - "/var/run/containerd/"
+    ignore_errors: true
+
+
+  - name: Unmount kubelet directory
+    mount: 
+      path: "{{ item }}"
+      state: unmounted
+    with_items:
+    - /var/lib/kubelet 
+    - /var/run/kubelet
+
+  - name: Remove related file or directory
+    file: 
+      name: "{{ item }}"
+      state: absent
+    with_items:
+    - /root/.kube
+    - /var/lib/kubelet
+    - /var/run/kubelet
+    - /usr/lib/systemd/system/kubelet.service
+    - /usr/lib/systemd/system/kubelet.service.d/
+    - /usr/share/bash-completion/completions/kubectl
+    - /etc/systemd/system/kubelet.service.d/20-kubelet-override.conf
+    - /var/lib/etcd
+    - /etc/etcd/
+    - /etc/systemd/system/etcd.service
+    - /etc/kubernetes
+    - /run/kubernetes
+    - /opt/cni
+    - /etc/cni/net.d
+    - /var/lib/cni
+    - /etc/calico
+    - /var/lib/calico
+    - /var/log/calico
+    - /var/log/pods
+    - /backup/k8s
+    - /etc/keepalived
+    - /etc/sysctl.d/99-sysctl-ko.conf
+    - /etc/modules-load.d/10-k8s-modules.conf
+    - /etc/systemd/system.conf.d/30-k8s-ulimits.conf
+    - /etc/docker/daemon.json 
+    - /usr/share/bash-completion/completions/kubectl
+    - /usr/local/bin/kubectl
+    - /usr/local/bin/kubeadm
+    - /usr/local/bin/kubelet
+    - /usr/local/bin/crictl
+    - /usr/local/bin/calicoctl
+    - /usr/local/bin/ctr
+    - /data/containerd 
+    - /var/lib/containerd
+    - /usr/local/bin/etcd
+    - /usr/local/bin/etcdctl
+    - /opt/ys 
+    - /data/temp/k8s 
+    - /usr/local/bin/containerd
+    - /usr/local/bin/containerd-shim
+    - /usr/local/bin/containerd-stress 
+    - /usr/local/bin/containerd-shim-runc-v1 
+    - /usr/local/bin/containerd-shim-runc-v2 
+
+
+
+
+#    - /var/lib/docker 
+
+  - name: Refresh iptables
+    iptables:
+      table: "{{ item }}"
+      flush: yes
+    with_items:
+    - filter
+    - nat
+    - mangle
+
+  - name: Refresh ip6tables
+    iptables:
+      table: "{{ item }}"
+      flush: yes
+      ip_version: ipv6
+    with_items:
+    - filter
+    - nat
+    - mangle
+
+  - name: Clean up ipvsadm
+    shell: "{{ item }} || true"
+    with_items:
+    - ipvsadm --clear
+
+  - name: Delete all k8s containers
+    shell: >
+      for i in `docker ps -a | grep -oP "k8s_.*"`;
+      do
+        docker rm -f -v $i;
+      done
+
+  - name: remove virtual network
+    shell: "{{ item }}"
+    with_items:
+    - ip link del tunl0
+    - ip link del kube-bridge
+    - ip link del dummy0
+    - ip link del kube-ipvs0
+    - sed -i '/crictl/d' /root/.bashrc 
+
+
+  - name: Get Legacy route rule
+    command: ip route show proto bird
+    changed_when: false
+    register: bird_routes
+  
+  - name: Delete Legacy route rule
+    command: "ip route del {{ bird_route }} proto bird"
+    with_items: "{{ bird_routes.stdout_lines }}"
+    loop_control:
+      loop_var: bird_route
+  
+  - name: Systemctl daemon-reload
+    systemd:
+      daemon_reload: yes
+
+  - name: Remove hosts record
+    lineinfile:
+      path: "/etc/hosts"
+      regexp: "{{ item }}"
+      state: absent
+    with_items:
+    - "{{ groups['kube-master'] }}"
+    - "kubernetes"
+
+  - name: Restart network
+    systemd:
+      name: >-
+        NetworkManager
+      state: restarted
+
+  ignore_errors: true

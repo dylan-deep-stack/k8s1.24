@@ -1,0 +1,236 @@
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: 0.0.0.0
+  bindPort: 6443
+nodeRegistration:
+  kubeletExtraArgs:
+    root-dir: /var/lib/kubelet
+    hostname-override: {{ inventory_hostname }}
+    pod-infra-container-image: registry.k8s.io/pause:3.7
+  criSocket: unix:///run/containerd/containerd.sock
+  name: {{ inventory_hostname }}
+  taints: []
+bootstrapTokens:
+- groups:
+  - system:bootstrappers:kubeadm:default-node-token
+  token: {{ kubeadm_token }}
+  ttl: 0s
+  usages:
+  - signing
+  - authentication
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+kubernetesVersion: v1.24.17
+clusterName: kubernetes
+controlPlaneEndpoint: "{{ KUBE_APISERVER_IP }}"
+certificatesDir: /etc/kubernetes/pki
+dns:
+  type: CoreDNS
+  imageRepository: registry.k8s.io/coredns
+  imageTag: v1.8.6
+etcd:
+  external:
+    endpoints:
+{% for host in groups['kube-master'] %}
+    - https://{{ hostvars[host]['ansible_ssh_host'] }}:2379
+{% endfor %}
+    caFile: /etc/kubernetes/pki/etcd/ca.crt
+    certFile: /etc/kubernetes/pki/apiserver-etcd-client.crt
+    keyFile: /etc/kubernetes/pki/apiserver-etcd-client.key
+networking:
+  dnsDomain: cluster.local
+  podSubnet: {{ kube_pod_subnet }}
+  serviceSubnet: {{ kube_service_subnet }}
+apiServer:
+  extraArgs:
+    allow-privileged: "true"
+    apiserver-count: "{{ groups['kube-master']|length }}"
+    enable-admission-plugins: NodeRestriction
+    enable-aggregator-routing: "true"
+    encryption-provider-config: /etc/kubernetes/pki/secrets-encryption.yaml
+    kubelet-certificate-authority: /etc/kubernetes/pki/ca.crt
+    kubelet-client-certificate: /etc/kubernetes/pki/apiserver-kubelet-client.crt
+    kubelet-client-key: /etc/kubernetes/pki/apiserver-kubelet-client.key
+    profiling: "false"
+    service-node-port-range: 80-50000
+  extraVolumes:
+    - hostPath: /etc/localtime
+      mountPath: /etc/localtime
+      pathType: File
+      readOnly: true
+      name: localtime
+  certSANs:
+  - localhost
+  - kubernetes
+  - kubernetes.default
+  - kubernetes.default.svc
+  - kubernetes.default.svc.cluster
+  - kubernetes.default.svc.cluster.local
+{% if hostvars[inventory_hostname]['ansible_ssh_host'] is defined %}
+{% for host in groups['kube-master']| unique %}
+  - {{ host }}
+{% endfor %}
+{% endif %}
+  - 127.0.0.1
+  - 0:0:0:0:0:0:0:1
+  - {{ KUBERNETES_SERVICE_IP }}
+{% for host in groups['kube-master'] | unique %}
+  - {% if hostvars[host]['ansible_ssh_host'] is defined %}{{ hostvars[host]['ansible_ssh_host'] }}{% else %}{{ host }}{% endif %}
+  
+{% endfor %}
+controllerManager:
+  extraArgs:
+    allocate-node-cidrs: "false"
+    bind-address: 127.0.0.1
+    experimental-cluster-signing-duration: "{{36500|int * 24}}h0m0s"
+    feature-gates: "RotateKubeletServerCertificate=true,IPv6DualStack=true"
+    profiling: "false"
+    node-monitor-grace-period: 40s
+    node-monitor-period: 5s
+    pod-eviction-timeout: 2m0s
+    terminated-pod-gc-threshold: "10"
+  extraVolumes:
+    - hostPath: /etc/localtime
+      mountPath: /etc/localtime
+      pathType: File
+      readOnly: true
+      name: localtime
+scheduler:
+  extraArgs:
+    bind-address: 127.0.0.1
+    profiling: "false"
+  extraVolumes:
+    - hostPath: /etc/localtime
+      mountPath: /etc/localtime
+      pathType: File
+      readOnly: true
+      name: localtime
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+address: 0.0.0.0
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    cacheTTL: 2m0s
+    enabled: true
+  x509:
+    clientCAFile: /etc/kubernetes/pki/ca.crt
+authorization:
+  mode: Webhook
+  webhook:
+    cacheAuthorizedTTL: 5m0s
+    cacheUnauthorizedTTL: 30s
+cgroupDriver: cgroupfs
+cgroupsPerQOS: true
+clusterDNS:
+- {{ CLUSTER_DNS_SERVICE_IP }}
+clusterDomain: cluster.local
+configMapAndSecretChangeDetectionStrategy: Watch
+containerLogMaxFiles: 5
+containerLogMaxSize: 10Mi
+contentType: application/vnd.kubernetes.protobuf
+cpuCFSQuota: true
+cpuCFSQuotaPeriod: 100ms
+cpuManagerPolicy: none
+cpuManagerReconcilePeriod: 10s
+enableControllerAttachDetach: true
+enableDebuggingHandlers: true
+enforceNodeAllocatable:
+- pods
+eventBurst: 10
+eventRecordQPS: 5
+evictionHard:
+  imagefs.available: 15%
+  memory.available: 100Mi
+  nodefs.available: 10%
+  nodefs.inodesFree: 5%
+kubeReserved:
+  cpu: 100m
+  memory: 256M
+evictionPressureTransitionPeriod: 5m0s
+failSwapOn: true
+featureGates: 
+  RotateKubeletServerCertificate: true
+  IPv6DualStack: true
+fileCheckFrequency: 20s
+hairpinMode: promiscuous-bridge
+healthzBindAddress: 127.0.0.1
+healthzPort: 10248
+httpCheckFrequency: 20s
+imageGCHighThresholdPercent: 85
+imageGCLowThresholdPercent: 80
+imageMinimumGCAge: 2m0s
+iptablesDropBit: 15
+iptablesMasqueradeBit: 14
+kubeAPIBurst: 10
+kubeAPIQPS: 5
+makeIPTablesUtilChains: true
+maxOpenFiles: 1000000
+maxPods: 110
+nodeLeaseDurationSeconds: 40
+nodeStatusReportFrequency: 1m0s
+nodeStatusUpdateFrequency: 10s
+oomScoreAdj: -999
+podPidsLimit: -1
+port: 10250
+protectKernelDefaults: true
+readOnlyPort: 0
+registryBurst: 10
+registryPullQPS: 5
+resolvConf: /etc/resolv.conf
+rotateCertificates: true
+runtimeRequestTimeout: 2m0s
+serializeImagePulls: true
+staticPodPath: /etc/kubernetes/manifests
+streamingConnectionIdleTimeout: 4h0m0s
+syncFrequency: 1m0s
+tlsCertFile: /var/lib/kubelet/pki/kubelet.crt
+tlsPrivateKeyFile: /var/lib/kubelet/pki/kubelet.key
+volumeStatsAggPeriod: 1m0s
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+bindAddress: 0.0.0.0
+clientConnection:
+  acceptContentTypes: ""
+  burst: 10
+  contentType: application/vnd.kubernetes.protobuf
+  kubeconfig: /var/lib/kube-proxy/kubeconfig.conf
+  qps: 5
+clusterCIDR: {{ kube_pod_subnet }}
+featureGates: 
+  IPv6DualStack: true
+configSyncPeriod: 15m0s
+conntrack:
+  maxPerCore: 32768
+  min: 131072
+  tcpCloseWaitTimeout: 1h0m0s
+  tcpEstablishedTimeout: 24h0m0s
+enableProfiling: false
+healthzBindAddress: 0.0.0.0:10256
+hostnameOverride: ""
+iptables:
+  masqueradeAll: true
+  masqueradeBit: 14
+  minSyncPeriod: 0s
+  syncPeriod: 30s
+ipvs:
+  excludeCIDRs: null
+  minSyncPeriod: 0s
+  scheduler: rr
+  strictARP: false
+  syncPeriod: 30s
+metricsBindAddress: 0.0.0.0:10249
+mode: ipvs
+nodePortAddresses: null
+oomScoreAdj: -999
+portRange: ""
+udpIdleTimeout: 250ms
+winkernel:
+  enableDSR: false
+  networkName: ""
+  sourceVip: ""

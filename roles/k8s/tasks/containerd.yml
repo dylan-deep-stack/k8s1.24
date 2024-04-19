@@ -1,0 +1,135 @@
+- name: Get whether docker has been installed
+  shell: 'systemctl status docker|grep Active || echo "NOT FOUND"'
+  register: docker_status
+
+- name: Error message
+  fail: msg="Docker already installed!"
+  when: '"running" in docker_status.stdout'
+
+- name: Prepare containerd directory
+  file: name={{ item }} state=directory
+  with_items:
+  - "/usr/local/bin"
+  - "/etc/containerd"
+
+- name: Load kernel module overlay
+  modprobe: name=overlay state=present
+
+- name: Create containerd directory
+  file: name={{ item }} state=directory
+  with_items:
+  - "/data/containerd"
+
+
+- name: Create containerd link
+  shell: >
+   ln -s /data/containerd /var/lib/containerd 
+
+  
+- name: Copy x86 the containerd file to env
+  copy:
+    src: "{{ base_dir }}/k8s/x86/containerd/bin/{{ item }}"
+    dest: "/usr/local/bin/"
+    mode: "0755"
+  with_items:
+  - containerd
+  - containerd-shim
+  - containerd-shim-runc-v1
+  - containerd-shim-runc-v2
+  - ctr
+  tags: upgrade
+  when: ansible_machine == 'x86_64'
+
+- name: Copy arm the containerd file to env
+  copy:
+    src: "{{ base_dir }}/k8s/arm/containerd/bin/{{ item }}"
+    dest: "/usr/local/bin/"
+    mode: "0755"
+  with_items:
+  - containerd
+  - containerd-shim
+  - containerd-shim-runc-v1
+  - containerd-shim-runc-v2
+  - ctr
+  tags: upgrade
+  when: ansible_machine != 'x86_64'
+
+- name: Copy x86 the containerd-stress file to env
+  copy:
+    src: "{{ base_dir }}/k8s/x86/containerd/bin/containerd-stress"
+    dest: "/usr/local/bin/"
+    mode: "0755"
+  tags: upgrade
+  when: (containerd_version in [ '1.6.0','1.7.13' ]) and (ansible_machine == 'x86_64')
+
+- name: Copy arm the containerd-stress file to env
+  copy:
+    src: "{{ base_dir }}/k8s/arm/containerd/bin/containerd-stress"
+    dest: "/usr/local/bin/"
+    mode: "0755"
+  tags: upgrade
+  when: (containerd_version in [ '1.3.6','1.6.0' ]) and (ansible_machine != 'x86_64')
+
+
+- name: Copy x86 the crictl file to env
+  copy:
+    src: "{{ base_dir }}/k8s/x86/crictl/crictl"
+    dest: "/usr/local/bin/"
+    mode: "0755"
+  when: ansible_machine == 'x86_64'
+
+- name: Copy arm the crictl file to env
+  copy:
+    src: "{{ base_dir }}/k8s/arm/crictl/crictl"
+    dest: "/usr/local/bin/"
+    mode: "0755"
+  when: ansible_machine != 'x86_64'
+
+
+- name: Copy x86 runc file
+  copy:
+    src: "{{ base_dir }}/k8s/x86/runc/runc.amd64"
+    dest: "/usr/local/bin/runc"
+    mode: "0755"
+  when: ansible_machine == 'x86_64'
+
+- name: Copy arm runc file
+  copy:
+    src: "{{ base_dir }}/k8s/arm/runc/runc.arm64"
+    dest: "/usr/local/bin/runc"
+    mode: "0755"
+  when: ansible_machine != 'x86_64'
+
+- name: Create containerd configuration file
+  template: src=config.toml.j2 dest=/etc/containerd/config.toml
+  tags: upgrade
+
+- name: Create systemd unit file
+  template: src=containerd.service.j2 dest=/etc/systemd/system/containerd.service
+  tags: upgrade
+
+- name: Create crictl configuration file
+  template: src=crictl.yaml.j2 dest=/etc/crictl.yaml
+
+- name: Enable containerd service
+  shell: systemctl enable containerd
+  ignore_errors: true
+
+- name: Start containerd service
+  shell: systemctl daemon-reload && systemctl restart containerd
+  tags: upgrade
+
+- name: Waiting for containerd to running
+  shell: "systemctl status containerd.service|grep Active"
+  register: containerd_status
+  until: '"running" in containerd_status.stdout'
+  retries: 10
+  delay: 5
+  tags: upgrade
+
+- name: Add crictl command completion
+  lineinfile:
+    dest: ~/.bashrc
+    state: present
+    regexp: 'crictl completion'
+    line: 'source <(crictl completion)'

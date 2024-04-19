@@ -1,0 +1,3 @@
+---
+kubeadm_token: "abcdef.0123456789abcdef"
+kube_dns_domain: "cluster.local"

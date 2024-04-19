@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  labels:
+    app: netshoot
+  name: netshoot
+spec:
+  selector:
+    matchLabels:
+      app: netshoot
+  template:
+    metadata:
+      labels:
+        app: netshoot
+    spec:
+      containers:
+      - image: docker.io/nicolaka/netshoot
+        name: netshoot
+        args:
+        - /bin/bash
+        - -c
+        - >
+           while :; do
+             echo "[$(date +%F\ %T)] hello"
+             sleep 1
+           done
+

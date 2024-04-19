@@ -1,0 +1,10 @@
+---
+kube_service_subnet_list: "{{ kube_service_subnet.split(',') }}"
+KUBERNETES_SERVICE_IP: "{{ kube_service_subnet_list[0] | ipaddr('net') | ipaddr(1) | ipaddr('address') }}"
+CLUSTER_DNS_SERVICE_IP: "{{ kube_service_subnet_list[0] | ipaddr('net') | ipaddr(10) | ipaddr('address') }}"
+KUBE_APISERVER_IP: "kubernetes:6443"
+# 当前节点ip
+CURRENT_HOST_IP: "{{ hostvars[inventory_hostname]['ansible_ssh_host'] }}"
+
+# etcd 集群间通信的IP和端口, 根据kube-master组成员自动生成
+INITIAL_CLUSTER: "{% for host in (groups['kube-master']|unique) %}etcd-{{ host }}=https://{{ hostvars[host]['ansible_ssh_host'] }}:2380{% if not loop.last %},{% endif %}{% endfor %}"

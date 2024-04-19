@@ -1,0 +1,6 @@
+- hosts:
+  - kube-master
+  gather_facts: true
+  serial: 3
+  roles:
+  - k8s
