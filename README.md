@@ -1,4 +1,4 @@
-1.Downlod k8s packages to k8s dir
+1.Downlod  packages  dir
 
 
 2.vim nodes
