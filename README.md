@@ -7,6 +7,7 @@ k8s v1.24.17版本自动化安装脚本，支持x86 和arm，同时支持x86和a
 1. Downlod  packages  dir 
 
 2. vim nodes
+```bash
 [kube-master]
 k8stest ansible_ssh_pass=test ansible_ssh_host=10.33.60.91
 k8stest2 ansible_ssh_pass=test ansible_ssh_host=10.33.60.92
