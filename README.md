@@ -5,6 +5,10 @@ k8s v1.24.17版本自动化安装脚本，支持x86 和arm，同时支持x86和a
 这部分列出项目的主要功能点。
  
 1. Downlod  packages  dir 
+```bash
+https://pan.baidu.com/s/1kHpbY_gxMqdcdiZO1f7uhw   
+7gtc
+将以下包，下载的主路径中，然后解压
 
 2. vim nodes
 ```bash
